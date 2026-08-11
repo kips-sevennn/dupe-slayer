@@ -2,6 +2,7 @@ import hashlib # For duplicate checks
 import os #For file iteration, thanks stackOverflow hehe
 from datetime import datetime
 from send2trash import send2trash
+import re
 import json
 
 def allDirectoriesOf(root_folder: str) -> dict:
@@ -9,6 +10,62 @@ def allDirectoriesOf(root_folder: str) -> dict:
     for i, (root, dirs, files) in enumerate(os.walk(root_folder)):
         dirs_dict[i] = root
     return dirs_dict
+
+def filter_function() -> dict:
+    """
+    Asks the user to choose the filters it wants, filter based on size, file format, date range, path exclusion, name pattern (regex support)
+    Output example: {'size_range': (100, 5000), 'formats': ['.txt', '.jpg'], 'date_range': (datetime.datetime(2006, 12, 12, 0, 0), datetime.datetime(2006, 9, 30, 0, 0)), 'excluded_paths': ['C:/Windows'], 'name': ['re:*.jpg']}
+    """
+    settings = {}
+    print("Want filters?\n1) Size\n2) File Format\n3) Date range\n4) Path exclusion\n5) Name (regex supported)\nUse commas to separate (blank for none)\n")
+    raw = [x.strip() for x in input().split(",") if x.strip().isnumeric()]
+    choices = [int(x) for x in raw if 1 <= int(x) <= 5]
+
+    size = 1 in choices
+    file_form = 2 in choices
+    date = 3 in choices
+    path_exclusion = 4 in choices
+    name = 5 in choices
+
+    if not choices:
+        return settings
+
+    if size:
+        while True:
+            parts = input("Enter size range in KB (e.g. 10-500): ").strip().split("-")
+            if len(parts) == 2 and all(p.strip().isnumeric() for p in parts):
+                settings["size_range"] = (int(parts[0]), int(parts[1]))
+                break
+            print("Invalid range, try again (format: min-max, numbers only).")
+
+    if file_form:
+        formats = input("Enter file formats (comma separated, e.g. .txt,.jpg): ").strip().split(",")
+        settings["formats"] = [f.strip() for f in formats if f.strip()]
+
+    if date:
+        while True:
+            raw_dates = input("Enter date range (DD-MM-YYYY,DD-MM-YYYY): ").strip().split(",")
+            try:
+                start = datetime.strptime(raw_dates[0].strip(), "%d-%m-%Y")
+                end = datetime.strptime(raw_dates[1].strip(), "%d-%m-%Y")
+            except (ValueError, IndexError):
+                print("Invalid date format, try again (DD-MM-YYYY,DD-MM-YYYY).")
+                continue
+            if end < start:
+                print("Invalid interval, try again (DD-MM-YYYY,DD-MM-YYYY)")
+                continue
+
+            settings["date_range"] = (start, end)
+            
+    if path_exclusion:
+        excluded = input("Enter folders to exclude (comma separated): ").strip().split(",")
+        settings["excluded_paths"] = [p.strip() for p in excluded if p.strip()]
+
+    if name:
+        names = input("For regex, prefix with 're:' e.g. re:^IMG_\\d+\\.jpg\nType name patterns, comma separated: ").strip().split(",")
+        settings["name"] = [n.strip() for n in names if n.strip()]
+
+    return settings
 
 def files_hash(folderpath: str) -> dict:
     #Note: I deleted filename = os.fsencode(element) and replaced os.fsdecode(filename) by element (in case i get type errors)
@@ -33,6 +90,13 @@ def deletion_func(hash_dict: dict, user_choices: list) -> None:
     select_mode = 3 in user_choices
     list_only = 2 in user_choices
 
+    if list_only:
+        #Make json file
+        if not os.path.isdir("jsons_folder"): os.mkdir("jsons_folder")
+        json_path = os.path.join("jsons_folder", 'output_'+datetime.now().strftime("%Y-%m-%d_%H-%M-%S")+'.json')  
+        duplicates = {h:paths for h,paths in hash_dict.items() if len(paths) > 1 }
+        with open(json_path, 'w') as f: json.dump(duplicates, f, indent=2)
+
    
     for hash_val, paths in hash_dict.items():
         if len(paths) <= 1:
@@ -43,14 +107,7 @@ def deletion_func(hash_dict: dict, user_choices: list) -> None:
         candidates = paths_sorted[1:]
 
 
-        if list_only:
-            #Make json file
-            if not os.path.isdir("jsons_folder"): os.mkdir("jsons_folder")
-
-            json_path = os.path.join("jsons_folder", 'output_'+datetime.now().strftime("%Y-%m-%d_%H-%M-%S")+'.json')  
-            duplicates = {h:paths for h,paths in hash_dict.items() if len(paths) > 1 }
-            with open(json_path, 'w') as f: json.dump(duplicates, f, indent=2)
-
+        
         if select_mode:
             print(f"Group (keep {keep}):")
             for i, p in enumerate(candidates):
@@ -70,6 +127,10 @@ def deletion_func(hash_dict: dict, user_choices: list) -> None:
                 send2trash(path)
                 print(f"Sent to trash: {path}")
 
+#___Main program
+
+filter_settings = filter_function()
+
 user_choices=[]
 while not user_choices:
     print(
@@ -80,8 +141,7 @@ while not user_choices:
         "Note: Option 1 will be ignored if selected with opt 3\n"
         "Tip: If first time on directory, use 2 and 3 to avoid deleting important files"
     )
-    
-    #Handling user input
+
     raw = input().split(",")
     user_choices = [int(el.strip()) for el in raw if el.strip().isnumeric() and 1 <= int(el.strip()) <= 3]
 
@@ -96,6 +156,7 @@ if 1 in user_choices or 3 in user_choices:
         delete_choice.remove(5)
     user_choices += delete_choice
 
+#Handle user settings here
 folder=str(input("Enter folder path: "))
 dirs_dict=allDirectoriesOf(folder)
 

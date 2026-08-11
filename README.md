@@ -1,30 +1,39 @@
-# dupe-slayer (v1.1)
+# dupe-slayer (v2.0)
 
-Find and remove duplicate files in a folder, using MD5 hashing.
+Find and remove duplicate files across a folder and all its subfolders, using MD5 hashing.
 
 ## What it does
 
-Point it at a folder. It hashes every file's content, groups files that share a hash (duplicates), and either:
-- exports a JSON report of duplicates, or
-- deletes duplicates, keeping the oldest copy of each.
+Point it at a folder. It walks the full folder tree, hashes every file's content, groups files that share a hash across ALL subfolders (not just per-folder), and lets you:
+- export a JSON report of duplicates,
+- delete all duplicates automatically (keeping the oldest copy of each), or
+- review each duplicate group and manually pick which copies to delete.
 
-Also offers to explore folders it couldn't access directly (likely subfolders).
+Deletion can go to the OS trash bin (recoverable) or be permanent.
 
 ## How it works
 
-1. User is prompted for a folder path (console input for now, tkinter UI planned).
-2. `hash_function()` walks the folder, hashes each file's content in binary mode, chunked (8192 bytes at a time) so large files don't get fully loaded into memory.
-   - Files are grouped by hash into `hash_dict`: `{hash: [file1, file2, ...]}`.
-   - Files that fail to open (`PermissionError`) are skipped, logged, and their names collected in `perm_denied` (assumed to be subfolders).
-3. `iteration_on_folders()` checks `hash_dict` with a bool flag: if any group has more than 1 file, duplicates exist and `deletion_func()` runs once. Otherwise prints "No duplicates found!".
-4. Inside `deletion_func()`, user chooses:
-   - **N** — export `hash_dict` to a timestamped JSON file in `jsons_folder/` (created if missing).
-   - **Y** — for every group with duplicates, sort files by creation time, keep the oldest, delete the rest.
-   - Anything else — reprompt (recursive call).
-5. If `perm_denied` isn't empty, user is asked whether to explore those folders:
-   - Each entry is listed with an index.
-   - User picks which ones to explore by index (comma-separated).
-   - v1.1 only goes one level deep — subfolders of subfolders are not explored.
+1. User is asked what they want to do, upfront, before anything runs:
+   - **1** — delete all detected duplicates
+   - **2** — get the list of duplicates (JSON export)
+   - **3** — select which duplicates to delete, per group
+   - Options can be combined (e.g. "2,3"). If **1** and **3** are both picked, **1** is ignored (manual selection wins).
+   - Input is validated and reprompted until at least one valid option is given.
+2. If deletion (**1** or **3**) is selected, a second prompt asks:
+   - **5** — permanent delete 
+   - **6** — send to trash bin 
+   - If both picked, **5** is ignored (trash wins, safer default).
+3. `allDirectoriesOf()` walks the full folder tree (`os.walk`) and returns every directory found in a dictionnary.
+4. For each directory, `files_hash()` hashes every file inside it (w/o filling the ram). Files that can't be opened (`PermissionError`) are skipped.
+> Note: On my tests I managed to have workarounds for the subfolders with permission issues 
+5. Each directory's hashes are merged into one `global_hash_dict` spanning the whole tree — so duplicates are caught even if they live in different subfolders.
+6. `deletion_func()` runs once on the merged dict:
+   - Groups with only 1 file are skipped (no duplicate).
+   - Groups with 2+ files are sorted by creation time; the oldest is kept.
+   - **List mode** exports all duplicate groups to a timestamped JSON file in `jsons_folder/` (created if missing).
+   - **Select mode** prints each candidate for deletion with an index, user picks which to remove (comma-separated, blank = none).
+   - **Delete-all mode** removes every duplicate except the oldest, no per-file prompt.
+   - Every deletion is printed on the console(path + method: perma or trash).
 
 ## Output format (JSON)
 
@@ -36,10 +45,10 @@ Also offers to explore folders it couldn't access directly (likely subfolders).
 
 ## Notes / limitations
 
-- Subfolder exploration is one level deep only (currently doing it); nested subfolders need manual selection (planned for v2).
-- Files without read permission are skipped and reported, not fatal.
+- Duplicates are detected tree-wide, across all subfolders under the root you provide.
+- No hash caching yet — every run rehashes every file from scratch.
+- No confirmation prompt before deletion beyond choosing trash vs. permanent — trash bin is the recoverable option if unsure.
 
 ## License
 
 MIT — free to use, modify, and distribute, commercial or not. Just keep the copyright notice.
-
