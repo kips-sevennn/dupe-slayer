@@ -3,21 +3,30 @@ import os #For file iteration, thanks stackOverflow hehe
 from datetime import datetime
 from send2trash import send2trash
 import re
+import fnmatch
 import json
 
-def allDirectoriesOf(root_folder: str) -> dict:
+def allDirectoriesOf(root_folder: str, filter: dict) -> dict:
+    excluded_paths = filter.get('excluded_paths', [])
+    excluded = set(os.path.normpath(p) for p in excluded_paths)
     dirs_dict = {}
-    for i, (root, dirs, files) in enumerate(os.walk(root_folder)):
+    i = 0
+    for root, dirs, files in os.walk(root_folder):
+        root_norm = os.path.normpath(root)
+        if root_norm in excluded:
+            dirs[:] = []
+            continue
         dirs_dict[i] = root
+        i += 1
     return dirs_dict
 
 def filter_function() -> dict:
     """
     Asks the user to choose the filters it wants, filter based on size, file format, date range, path exclusion, name pattern (regex support)
-    Output example: {'size_range': (100, 5000), 'formats': ['.txt', '.jpg'], 'date_range': (datetime.datetime(2006, 12, 12, 0, 0), datetime.datetime(2006, 9, 30, 0, 0)), 'excluded_paths': ['C:/Windows'], 'name': ['re:*.jpg']}
+    Output example: {'size_range': [100, 5000], 'formats': ['.txt', '.jpg'], 'date_range': [datetime.datetime(2006, 12, 12, 0, 0), datetime.datetime(2006, 9, 30, 0, 0)], 'excluded_paths': ['C:/Windows'], 'name': ['re:*.jpg']}
     """
     settings = {}
-    print("Want filters?\n1) Size\n2) File Format\n3) Date range\n4) Path exclusion\n5) Name (regex supported)\nUse commas to separate (blank for none)\n")
+    print("Want filters?\n1) Size\n2) File Format\n3) Date range(creation date)\n4) Path exclusion\n5) Name (wildcard and regex supported)\nUse commas to separate (blank for none)\n")
     raw = [x.strip() for x in input().split(",") if x.strip().isnumeric()]
     choices = [int(x) for x in raw if 1 <= int(x) <= 5]
 
@@ -32,9 +41,11 @@ def filter_function() -> dict:
 
     if size:
         while True:
-            parts = input("Enter size range in KB (e.g. 10-500): ").strip().split("-")
+            parts = input("Enter size range in KB (e.g. 10-500): ").strip()
+            if not parts: break
+            parts=parts.split("-")
             if len(parts) == 2 and all(p.strip().isnumeric() for p in parts):
-                settings["size_range"] = (int(parts[0]), int(parts[1]))
+                settings["size_range"] = [int(parts[0]), int(parts[1])]
                 break
             print("Invalid range, try again (format: min-max, numbers only).")
 
@@ -44,7 +55,9 @@ def filter_function() -> dict:
 
     if date:
         while True:
-            raw_dates = input("Enter date range (DD-MM-YYYY,DD-MM-YYYY): ").strip().split(",")
+            raw_dates = input("Enter date range, blank if none (DD-MM-YYYY,DD-MM-YYYY): ").strip()
+            if not raw_dates: break
+            raw_dates = raw_dates.split(",")
             try:
                 start = datetime.strptime(raw_dates[0].strip(), "%d-%m-%Y")
                 end = datetime.strptime(raw_dates[1].strip(), "%d-%m-%Y")
@@ -55,40 +68,83 @@ def filter_function() -> dict:
                 print("Invalid interval, try again (DD-MM-YYYY,DD-MM-YYYY)")
                 continue
 
-            settings["date_range"] = (start, end)
-            
+            settings["date_range"] = [start, end]
+            break
+
     if path_exclusion:
         excluded = input("Enter folders to exclude (comma separated): ").strip().split(",")
-        settings["excluded_paths"] = [p.strip() for p in excluded if p.strip()]
+        settings["excluded_paths"] = [p.strip().strip('"\'') for p in excluded if p.strip()]
 
     if name:
-        names = input("For regex, prefix with 're:' e.g. re:^IMG_\\d+\\.jpg\nType name patterns, comma separated: ").strip().split(",")
+        names = input("For regex, prefix with 're:' e.g. re:^IMG_\\d+\\.jpg\nType name and/or pattern, comma separated: ").strip().split(",")
         settings["name"] = [n.strip() for n in names if n.strip()]
 
+    settings={key:value for key,value in settings.items() if value}
     return settings
 
-def files_hash(folderpath: str) -> dict:
-    #Note: I deleted filename = os.fsencode(element) and replaced os.fsdecode(filename) by element (in case i get type errors)
+def files_hash(folderpath: str, filter: dict = None) -> dict:
+    filter = filter or {}
     hash_dict = {}
+
     for element in os.listdir(folderpath):
-        file_path = os.path.join(folderpath, element) 
+        file_path = os.path.join(folderpath, element)
         file_path = os.path.normpath(file_path)
+
+        if not os.path.isfile(file_path):
+            continue
+
+        # Extension filter
+        if "formats" in filter:
+            if not any(element.lower().endswith(ext.lower()) for ext in filter["formats"]):
+                continue
+
+        # Size filter (KB)
+        if "size_range" in filter:
+            size_kb = os.path.getsize(file_path) / 1024
+            min_kb, max_kb = filter["size_range"]
+            if not (min_kb <= size_kb <= max_kb):
+                continue
+
+        # Date filter (creation date)
+        if "date_range" in filter:
+            file_date = datetime.fromtimestamp(os.path.getctime(file_path))
+            start, end = filter["date_range"]
+            if not (start <= file_date <= end):
+                continue
+
+        # Name filter (glob or regex)
+        if "name" in filter:
+            match = False
+            for pattern in filter["name"]:
+                if pattern.startswith("re:"):
+                    if re.search(pattern[3:], element):
+                        match = True
+                        break
+                elif fnmatch.fnmatch(element, pattern):
+                    match = True
+                    break
+            if not match:
+                continue
+
         file_hash = hashlib.md5()
         try:
             with open(file_path, 'rb') as f:
-                for buffer in iter(lambda: f.read(8192), b''): file_hash.update(buffer) 
+                for buffer in iter(lambda: f.read(8192), b''): file_hash.update(buffer)
                 hash_dict[str(file_hash.hexdigest())].append(file_path)
-        except PermissionError: 
-            print(f"skipping (permission issues): {element}")    
+        except PermissionError:
+            print(f"skipping (permission issues): {element}")
             continue
         except KeyError:
-            hash_dict[str(file_hash.hexdigest())]=[file_path]  
+            hash_dict[str(file_hash.hexdigest())] = [file_path]
+
     return hash_dict
 
-def deletion_func(hash_dict: dict, user_choices: list) -> None:
+def process_duplicate(hash_dict: dict, user_choices: list) -> None:
     perma = 5 in user_choices
     select_mode = 3 in user_choices
     list_only = 2 in user_choices
+
+
 
     if list_only:
         #Make json file
@@ -127,14 +183,13 @@ def deletion_func(hash_dict: dict, user_choices: list) -> None:
                 send2trash(path)
                 print(f"Sent to trash: {path}")
 
-#___Main program
+#__________Main program__________
 
-filter_settings = filter_function()
 
 user_choices=[]
 while not user_choices:
     print(
-        "What options do you want? (separate with commas)\n" 
+        "\nChoose options (separate with commas)\n" 
         "1) Delete all detected duplicates\n" 
         "2) Get the list of duplicates\n"
         "3) Select duplicates to delete\n"   
@@ -157,16 +212,17 @@ if 1 in user_choices or 3 in user_choices:
     user_choices += delete_choice
 
 #Handle user settings here
+filter_settings = filter_function()
 folder=str(input("Enter folder path: "))
-dirs_dict=allDirectoriesOf(folder)
+dirs_dict=allDirectoriesOf(folder, filter_settings)
 
 
 global_hash_dict={}
 for index in dirs_dict.keys():
     current_directory = dirs_dict[index]
     print(f"\nCurrently working on: {current_directory}")
-    local_hashes =  files_hash(current_directory)
+    local_hashes =  files_hash(current_directory, filter_settings)
     for h, paths in local_hashes.items():
         global_hash_dict.setdefault(h, []).extend(paths)
-deletion_func(global_hash_dict, user_choices)
+process_duplicate(global_hash_dict, user_choices)
 
