@@ -82,8 +82,24 @@ def filter_function() -> dict:
     settings={key:value for key,value in settings.items() if value}
     return settings
 
-def files_hash(folderpath: str, filter: dict = None) -> dict:
+def get_hash(path: str, cache: dict) -> str:
+    stat = os.stat(path)
+    cached = cache.get(path)
+    if cached and cached["mtime"] == stat.st_mtime and cached["size"] == stat.st_size:
+        return cached["hash"]
+
+    h = hashlib.md5()
+    with open(path, 'rb') as f:
+        for buffer in iter(lambda: f.read(8192), b''):
+            h.update(buffer)
+    digest = h.hexdigest()
+    cache[path] = {"mtime": stat.st_mtime, "size": stat.st_size, "hash": digest}
+    return digest
+
+
+def files_hash(folderpath: str, filter: dict = None, cache: dict = None) -> dict:
     filter = filter or {}
+    cache = cache if cache is not None else {}
     hash_dict = {}
 
     for element in os.listdir(folderpath):
@@ -93,26 +109,22 @@ def files_hash(folderpath: str, filter: dict = None) -> dict:
         if not os.path.isfile(file_path):
             continue
 
-        # Extension filter
         if "formats" in filter:
             if not any(element.lower().endswith(ext.lower()) for ext in filter["formats"]):
                 continue
 
-        # Size filter (KB)
         if "size_range" in filter:
             size_kb = os.path.getsize(file_path) / 1024
             min_kb, max_kb = filter["size_range"]
             if not (min_kb <= size_kb <= max_kb):
                 continue
 
-        # Date filter (creation date)
         if "date_range" in filter:
             file_date = datetime.fromtimestamp(os.path.getctime(file_path))
             start, end = filter["date_range"]
             if not (start <= file_date <= end):
                 continue
 
-        # Name filter (glob or regex)
         if "name" in filter:
             match = False
             for pattern in filter["name"]:
@@ -126,16 +138,13 @@ def files_hash(folderpath: str, filter: dict = None) -> dict:
             if not match:
                 continue
 
-        file_hash = hashlib.md5()
         try:
-            with open(file_path, 'rb') as f:
-                for buffer in iter(lambda: f.read(8192), b''): file_hash.update(buffer)
-                hash_dict[str(file_hash.hexdigest())].append(file_path)
+            digest = get_hash(file_path, cache)
         except PermissionError:
             print(f"skipping (permission issues): {element}")
             continue
-        except KeyError:
-            hash_dict[str(file_hash.hexdigest())] = [file_path]
+
+        hash_dict.setdefault(digest, []).append(file_path)
 
     return hash_dict
 
@@ -148,8 +157,8 @@ def process_duplicate(hash_dict: dict, user_choices: list) -> None:
 
     if list_only:
         #Make json file
-        if not os.path.isdir("jsons_folder"): os.mkdir("jsons_folder")
-        json_path = os.path.join("jsons_folder", 'output_'+datetime.now().strftime("%Y-%m-%d_%H-%M-%S")+'.json')  
+        if not os.path.isdir("JSONS_FOLDER"): os.mkdir("JSONS_FOLDER")
+        json_path = os.path.join("JSONS_FOLDER", 'output_'+datetime.now().strftime("%Y-%m-%d_%H-%M-%S")+'.json')  
         duplicates = {h:paths for h,paths in hash_dict.items() if len(paths) > 1 }
         with open(json_path, 'w') as f: json.dump(duplicates, f, indent=2)
 
@@ -185,6 +194,16 @@ def process_duplicate(hash_dict: dict, user_choices: list) -> None:
 
 #__________Main program__________
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+JSONS_FOLDER = os.path.join(SCRIPT_DIR, "jsons_folder")
+CACHE_PATH = os.path.join(SCRIPT_DIR, "cache.json")
+
+# load, before the main loop
+if os.path.exists(CACHE_PATH):
+    with open(CACHE_PATH) as f:
+        cache = json.load(f)
+else:
+    cache = {}
 
 user_choices=[]
 while not user_choices:
@@ -221,8 +240,12 @@ global_hash_dict={}
 for index in dirs_dict.keys():
     current_directory = dirs_dict[index]
     print(f"\nCurrently working on: {current_directory}")
-    local_hashes =  files_hash(current_directory, filter_settings)
+    local_hashes =  files_hash(current_directory, filter_settings, cache)
     for h, paths in local_hashes.items():
         global_hash_dict.setdefault(h, []).extend(paths)
+
 process_duplicate(global_hash_dict, user_choices)
+
+with open(CACHE_PATH, "w") as f:
+    json.dump(cache, f, indent=2)
 

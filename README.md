@@ -1,15 +1,15 @@
-# dupe-slayer (v2.0)
+# dupe-slayer (v2.1)
 
-Find and remove duplicate files across a folder and all its subfolders, using MD5 hashing.
+Find and remove duplicate files across a folder and all its subfolders, using MD5 hashing — with filters and a hash cache for fast repeat scans.
 
 ## What it does
 
-Point it at a folder. It walks the full folder tree, hashes every file's content, groups files that share a hash across ALL subfolders (not just per-folder), and lets you:
+Point it at a folder. It walks the full folder tree, hashes every file's content (respecting any filters you set), groups files that share a hash across ALL subfolders, and lets you:
 - export a JSON report of duplicates,
 - delete all duplicates automatically (keeping the oldest copy of each), or
 - review each duplicate group and manually pick which copies to delete.
 
-Deletion can go to the OS trash bin (recoverable) or be permanent.
+Deletion can go to the OS trash bin (recoverable) or be permanent. Filters let you narrow the scan by size, extension, date, name pattern, or excluded folders. A hash cache skips rehashing unchanged files on repeat runs.
 
 ## How it works
 
@@ -20,20 +20,30 @@ Deletion can go to the OS trash bin (recoverable) or be permanent.
    - Options can be combined (e.g. "2,3"). If **1** and **3** are both picked, **1** is ignored (manual selection wins).
    - Input is validated and reprompted until at least one valid option is given.
 2. If deletion (**1** or **3**) is selected, a second prompt asks:
-   - **5** — permanent delete 
-   - **6** — send to trash bin 
+   - **5** — permanent delete (`os.remove`)
+   - **6** — send to trash bin (`send2trash`, recoverable)
    - If both picked, **5** is ignored (trash wins, safer default).
-3. `allDirectoriesOf()` walks the full folder tree (`os.walk`) and returns every directory found in a dictionnary.
-4. For each directory, `files_hash()` hashes every file inside it (w/o filling the ram). Files that can't be opened (`PermissionError`) are skipped.
-> Note: On my tests I managed to have workarounds for the subfolders with permission issues 
-5. Each directory's hashes are merged into one `global_hash_dict` spanning the whole tree — so duplicates are caught even if they live in different subfolders.
-6. `deletion_func()` runs once on the merged dict:
+3. `filter_function()` optionally asks for filters:
+   - **Size** — KB range.
+   - **File format** — list of extensions.
+   - **Date range** — creation date, DD-MM-YYYY to DD-MM-YYYY.
+   - **Path exclusion** — folders to skip entirely (and everything nested under them).
+   - **Name** — wildcard (`*.jpg`) by default, or regex if prefixed with `re:`.
+   - Any filter can be left blank to skip it.
+4. `allDirectoriesOf()` walks the full folder tree (`os.walk`), pruning excluded folders at walk time so their subtrees are never even visited.
+5. For each directory, `files_hash()` filters files per the active settings, then hashes what's left via `get_hash()`:
+   - Checks a persistent cache (`cache.json`, keyed by file path, storing mtime/size/hash).
+   - If a file's mtime and size match the cache, the stored hash is reused — no rehashing.
+   - Otherwise the file is rehashed (chunked binary reads, 8192 bytes at a time) and the cache entry updated.
+6. Each directory's hashes are merged into one `global_hash_dict` spanning the whole tree — duplicates are caught even across different subfolders.
+7. `process_duplicate()` runs once on the merged dict:
    - Groups with only 1 file are skipped (no duplicate).
    - Groups with 2+ files are sorted by creation time; the oldest is kept.
-   - **List mode** exports all duplicate groups to a timestamped JSON file in `jsons_folder/` (created if missing).
-   - **Select mode** prints each candidate for deletion with an index, user picks which to remove (comma-separated, blank = none).
+   - **List mode** exports all duplicate groups to a timestamped JSON file in `jsons_folder/`.
+   - **Select mode** prints each candidate for deletion with an index, user picks which to remove.
    - **Delete-all mode** removes every duplicate except the oldest, no per-file prompt.
-   - Every deletion is printed on the console(path + method: perma or trash).
+   - Every deletion is printed (path + method: perma or trash).
+8. The hash cache is saved back to `cache.json` at the end of the run, next to the script.
 
 ## Output format (JSON)
 
@@ -46,9 +56,11 @@ Deletion can go to the OS trash bin (recoverable) or be permanent.
 ## Notes / limitations
 
 - Duplicates are detected tree-wide, across all subfolders under the root you provide.
-- No hash caching yet — every run rehashes every file from scratch.
+- Cache is keyed by full path + mtime + size — a file edited without changing mtime (rare, but possible) could return a stale hash.
 - No confirmation prompt before deletion beyond choosing trash vs. permanent — trash bin is the recoverable option if unsure.
+- Hashing is currently single-threaded/single-core; large scans on many files will be CPU-bound.
 
 ## License
 
 MIT — free to use, modify, and distribute, commercial or not. Just keep the copyright notice.
+
