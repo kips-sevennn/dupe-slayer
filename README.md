@@ -1,4 +1,4 @@
-# dupe-slayer (v2.1)
+# dupe-slayer
 
 Find and remove duplicate files across a folder and all its subfolders, using MD5 hashing — with filters and a hash cache for fast repeat scans.
 
@@ -6,9 +6,10 @@ Find and remove duplicate files across a folder and all its subfolders, using MD
 - Python 3.8 (or later)
 - send2trash module (pip install send2trash)
 - pyinstaller, if you want to make an executable from it - (pip install pyinstaller)
-Other modules are bundled with python by default :)
 
-### Pro tip
+Other modules are installed with python by default :)
+
+### Tip
 If you need to make an executable out of it, open a terminal on the folder and execute
 ```shell
 pyinstaller --onefile main.py
