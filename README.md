@@ -2,6 +2,18 @@
 
 Find and remove duplicate files across a folder and all its subfolders, using MD5 hashing — with filters and a hash cache for fast repeat scans.
 
+## What you'll need
+- Python 3.8 (or later)
+- send2trash module (pip install send2trash)
+- pyinstaller, if you want to make an executable from it - (pip install pyinstaller)
+Other modules are bundled with python by default :)
+
+### Pro tip
+If you need to make an executable out of it, open a terminal on the folder and execute
+```shell
+pyinstaller --onefile main.py
+```
+
 ## What it does
 
 Point it at a folder. It walks the full folder tree, hashes every file's content (respecting any filters you set), groups files that share a hash across ALL subfolders, and lets you:

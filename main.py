@@ -148,7 +148,7 @@ def files_hash(folderpath: str, filter: dict = None, cache: dict = None) -> dict
 
     return hash_dict
 
-def process_duplicate(hash_dict: dict, user_choices: list) -> None:
+def process_duplicate(hash_dict: dict, user_choices: list, jsons_folder: str) -> None:
     perma = 5 in user_choices
     select_mode = 3 in user_choices
     list_only = 2 in user_choices
@@ -244,7 +244,7 @@ for index in dirs_dict.keys():
     for h, paths in local_hashes.items():
         global_hash_dict.setdefault(h, []).extend(paths)
 
-process_duplicate(global_hash_dict, user_choices)
+process_duplicate(global_hash_dict, user_choices, JSONS_FOLDER)
 
 with open(CACHE_PATH, "w") as f:
     json.dump(cache, f, indent=2)
